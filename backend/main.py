@@ -1,9 +1,12 @@
+# /backend/main.py
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 from openai import OpenAI
+from fastapi.responses import StreamingResponse
 
 load_dotenv()
 
@@ -19,22 +22,57 @@ app.add_middleware(
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
 class ChatRequest(BaseModel):
-    message: str
+    messages: list[ChatMessage]
+
 
 @app.get("/")
 def read_root():
     return {"message": "FastAPI working"}
 
+
 @app.post("/chat")
 def chat(request: ChatRequest):
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "user", "content": request.message}
-        ]
-    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "你是一個友善、簡潔的 AI 助手，請用繁體中文回答。"},
+                *[msg.model_dump() for msg in request.messages]
+            ]
+        )
 
-    return {
-        "reply": response.choices[0].message.content
-    }
+        return {
+            "reply": response.choices[0].message.content
+        }
+    except Exception as e:
+        return {
+            "error": str(e)
+        }
+
+@app.post("/chat-stream")
+def chat_stream(request: ChatRequest):
+
+    def generate():
+
+        stream = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "你是一個友善的 AI 助手，請用繁體中文回答。"},
+                *[msg.model_dump() for msg in request.messages]
+            ],
+            stream=True,
+        )
+
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+    return StreamingResponse(generate(), media_type="text/plain")
